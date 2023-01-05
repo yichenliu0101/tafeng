@@ -1,0 +1,183 @@
+---
+title: "Group9_TF_EXPLORATION"
+author: "Group9"
+date: "2022/4/15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(data.table)
+library(tidyverse)
+library(ggplot2)
+library(gridExtra)
+library(heatmaply)
+library(RColorBrewer)
+library(vcd)
+```
+
+```{r}
+load("tf0.rdata")
+#load("tf3.rdata")
+#load("tf4.rdata")
+#load("CX.rdata")
+load("tf4.rdata")
+```
+
+```{r}
+par(mfrow=c(1,2),cex=0.7)
+table(A0$age, useNA='ifany') %>% barplot(main="Age Groups",las=2) #人數分布在a34、a39、a44 
+table(A0$area, useNA='ifany') %>% barplot(main="Areas",las=2)  #地區分布在南港區及汐止區
+```
+
+```{r}
+cats = Z0 %>% 
+  group_by(cat) %>% 
+  summarise(
+    noProd = n_distinct(prod), #取商品唯一ID
+    totalQty = sum(qty), #總銷售數量
+    totalRev = sum(price), #總收益
+    totalGross = sum(price) - sum(cost),#總毛利
+    grossMargin = totalGross/totalRev, #邊際毛利
+    avgPrice = totalRev/totalQty#平均價格
+  )
+cats$ID <- as.character(cats$cat)
+
+
+(g1 <- cats %>%
+  top_n(10, totalRev) %>%
+  ggplot(aes(x = ID, y = totalRev)) +
+  geom_col()) #560102及560402的銷售金額最高
+(g2 <- cats %>%
+  top_n(10, totalGross) %>%
+  ggplot(aes(x = ID, y = totalGross)) +
+  geom_col()) #320402、560201、560402的總毛利最高
+(g3 <- cats %>%
+  top_n(10, avgPrice) %>%
+  ggplot(aes(x = ID, y = avgPrice)) +
+  geom_col()) #平均價格前10名均落在3000~4000
+(g4 <- cats %>%
+  top_n(10, grossMargin) %>%
+  ggplot(aes(x = ID, y = grossMargin)) +
+  geom_col()) #邊際毛利均落在0.4以上
+```
+```{r}
+top10_Rev = cats %>% top_n(10,totalRev)
+top10_Gross = cats %>% top_n(10,totalGross)
+top = merge(top10_Rev,top10_Gross,all = F)
+
+col6 = c('seagreen','gold','orange',rep('red',3))
+options(scipen = 999)
+g = top %>% ggplot(aes(x=totalRev,y=totalGross,size=totalQty,col=avgPrice)) + geom_point(alpha=0.7)+ geom_text(aes(label=cat,size=0.4),col="black") + scale_size(range=c(5,20)) + scale_color_gradientn(colors=col6) + theme_bw()
+
+ggplotly(g)
+```
+
+```{r}
+# (A0_rfm <- A0 %>%
+#   select(cust, r, s, f, m, rev) %>%
+#   summarize(cust, r, f, m, rev, avg_f = (s-r) / (f-1)))
+# sum(is.na(A0_rfm$avg_f))
+# table(A0_rfm$avg_f) %>%barplot
+```
+
+```{r}
+X0$wday = format(X0$date, "%u")
+mtx1 = table(X0$age,X0$wday) %>% prop.table(1) 
+mtx1 = as.data.frame.matrix(mtx1)
+heatmaply(mtx1,Rowv=F,Colv=F)
+#年輕人特別喜歡在周末來消費，而老人消費頻率則較為平均
+```
+
+```{r}
+mtx2 = table(X0$area,X0$wday) %>% prop.table(1)
+mtx2 = as.data.frame.matrix(mtx2)
+heatmaply(mtx2,Rowv=F,Colv=F)
+#各地區的人普遍都喜歡在周末消費，其中以信義區和松山區更為明顯
+```
+
+
+```{r}
+top_10 = cats %>% top_n(10, totalGross) %>% pull(cat)
+Z_top10 = Z0 %>% filter(cat %in% top$cat)
+Z_top10$wday = format(Z_top10$date, "%u")
+Z_top10 = Z_top10 %>% mutate(Gross = price-cost)
+a = Z_top10 %>% count(cat,wday,wt=Gross)
+xtabs(n~cat+wday,data=a) %>% as.data.frame.matrix %>% heatmaply(Rowv=F,Colv=F)
+```
+
+```{r}
+top10_Rev = cats %>% top_n(10,totalRev)
+top10_Gross = cats %>% top_n(10,totalGross)
+top = merge(top10_Rev,top10_Gross,all = F)
+MOSA = function(formula, data) mosaic(formula, data, shade=T, 
+  margins=c(0,1,0,0), labeling_args = list(rot_labels=c(90,0,0,0)),
+  gp_labels=gpar(fontsize=9), legend_args=list(fontsize=9),
+  gp_text=gpar(fontsize=7),labeling=labeling_residuals)
+MOSA(~cat+age, Z0[Z0$cat %in% top$cat,])
+```
+
+```{r}
+A0$cust <- as.numeric(A0$cust)
+A0_cluster <- A0 %>%
+  select(cust, r, s, f, m)
+A0_cluster_scale = scale(A0_cluster[,c(2:5)]) %>% data.frame
+sapply(A0_cluster_scale, mean)
+sapply(A0_cluster_scale,sd)
+
+d = dist(A0_cluster_scale, method="euclidean")#歐式距離
+hc = hclust(d, method='ward.D') #華德法
+plot(hc)
+
+```
+
+```{r}
+kg = cutree(hc, k=7)
+table(kg)
+names(A0_cluster_scale) =c(
+  "最近消費天數","第一次消費天數","頻率","平均交易金額")
+kg1 = kg %>% as.factor() %>% as.data.frame()
+colnames(kg1) <- "group"
+
+sapply(split(A0_cluster,kg), colMeans) %>% round(2)  # 原始尺度 
+sapply(split(A0_cluster_scale,kg), colMeans) %>% round(2)  # 標準尺度
+```
+
+
+
+
+```{r}
+plot.new() 
+c = brewer.pal(12,"Set3")[2:5] # 設定顏色
+par(cex=0.8,family="黑體-繁 中黑")
+split(A0_cluster_scale,kg) %>% sapply(colMeans) %>% barplot(beside=T,col =c,legend = TRUE, xlim=c(0,45), names.arg = c("生活", "瞌睡", "新顧客", "沉睡", "潛力股", "忠實", "員工"), xlab="分群")
+```
+```{r}
+group = A0_cluster %>% cbind(kg1) %>%
+  mutate (customer = case_when(group == 1 ~"生活型顧客",
+                              group == 2 ~"沉睡型顧客",
+                              group == 3 ~"沉睡型顧客",
+                              group == 4 ~"節慶型顧客", 
+                              group == 5 ~"採購型顧客",
+                              group == 6 ~"忠實顧客",
+                              group == 7 ~"員工"))
+```
+
+
+
+```{r}
+cust_group <- group %>%
+  select(cust, group, customer) %>%
+  merge(A0, by = "cust")
+
+MOSA(~group+age, data=cust_group)
+MOSA(~group+area, data=cust_group)
+```
+
+
+```
+
+
